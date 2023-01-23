@@ -39,6 +39,33 @@ class VKWrapper:
             raise ValueError("Response is not correct!")
 
 
+def parse_images_from_post(posts):
+    links = []
+    for post in posts['response']['items']:
+        if not post.get("attachments", None):
+            continue
+        for att in post['attachments']:
+            if not att['type'] == "photo":
+                continue
+
+            if "sizes" in att['photo']:
+                m_s_ind = -1
+                m_s_wid = 0
+
+                for i, size in enumerate(att['photo']["sizes"]):
+                    if size["width"] > m_s_wid:
+                        m_s_wid = size["width"]
+                        m_s_ind = i
+
+                link = att['photo']["sizes"][m_s_ind]["url"]
+                links.append(link)
+            elif "url" in att['photo']:
+                link = att['photo']['url']
+                links.append(link)
+
+    return links
+
+
 def calculate(count):
     count_array = []
     max_val = 100
@@ -86,6 +113,41 @@ def get_posts(vk_api, count, offset=None):
     return links
 
 
+def download_images(name, links):
+    print(f"Start downloading {len(links)} images. Wait plz!\n")
+    bar = progressbar.ProgressBar(maxval=len(links), widgets=[
+        f'Downloading {len(links)} images: ',
+        progressbar.Bar(marker='#', left='[', right=']', fill='.'),
+        progressbar.Percentage(),
+    ]).start()
+
+    if not os.path.exists(f"output/"):
+        os.makedirs(f"output/")
+
+    l = 0
+    for url in links:
+        l += 1
+        bar.update(l)
+        result = re.search(reg_ex, url)
+        if result:
+            g = result.group(0)
+        else:
+            continue
+
+        img_bytes = requests.get(url, stream=True)
+        try:
+            if not os.path.exists(f"output/{name}/"):
+                os.makedirs(f"output/{name}")
+
+            with open(f"output/{name}/{g}", 'wb') as f:
+                img_bytes.raw.decode_content = True
+                shutil.copyfileobj(img_bytes.raw, f)
+        except Exception as e:
+            print(f"ERROR: {e}")
+
+    bar.finish()
+
+
 if __name__ == "__main__":
     group_id = dotenv_values('.env')['GROUP_ID']
     if not group_id:
@@ -102,7 +164,7 @@ if __name__ == "__main__":
     elif offset:
         offset = int(offset)
 
-    count = input("Enter count of posts with images parse\n")
+    count = input("Enter count of posts to parse\n")
     if not count:
         print("Count is not presented")
         exit()
@@ -111,8 +173,21 @@ if __name__ == "__main__":
     else:
         count = int(count)
 
+    is_image_need = input('Do I need to download images?\n')
+    is_image_need = is_image_need in ('Yes', 'y', 'yes')
+
     vk_api = VKWrapper(dotenv_values(".env")['VK_TOKEN'], group_id)
     posts = get_posts(vk_api, count, offset)
-    with open('posts.pkl', 'wb') as f:
+    with open(f"output/{dotenv_values('.env')['GROUP_ID']}.pkl", 'wb') as f:
         pickle.dump(posts, f)
+
+    if is_image_need:
+        links = []
+        for post in posts:
+            l = parse_images_from_post(post)
+            for li in l:
+                links.append(li)
+
+        download_images(str(vk_api.group_id), links)
+
     print("Thanks for using that program!")
